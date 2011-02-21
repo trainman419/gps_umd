@@ -1,12 +1,10 @@
 #include <ros/ros.h>
 #include <gps_common/GPSFix.h>
 #include <gps_common/GPSStatus.h>
-#include <sensor_msgs/NavSatFix.h>
-#include <sensor_msgs/NavSatStatus.h>
 #include <libgpsmm.h>
 
 using namespace gps_common;
-using namespace sensor_msgs;
+//using namespace sensor_msgs;
 
 class GPSDClient {
   public:
@@ -14,7 +12,6 @@ class GPSDClient {
 
     bool start() {
       gps_fix_pub = node.advertise<GPSFix>("extended_fix", 1);
-      navsat_fix_pub = node.advertise<NavSatFix>("fix", 1);
 
       privnode.getParam("use_gps_time", use_gps_time);
 
@@ -38,6 +35,7 @@ class GPSDClient {
       gps.query("w\n");
 #else
 #error "gpsd_client only supports gpsd API versions 3 and 4"
+#error GPSD_API_MAJOR_VERSION
 #endif
 
       ROS_INFO("GPSd opened");
@@ -57,7 +55,6 @@ class GPSDClient {
     ros::NodeHandle node;
     ros::NodeHandle privnode;
     ros::Publisher gps_fix_pub;
-    ros::Publisher navsat_fix_pub;
     gpsmm gps;
 
     bool use_gps_time;
@@ -70,7 +67,6 @@ class GPSDClient {
         return;
 
       process_data_gps(p);
-      process_data_navsat(p);
     }
 
 
@@ -154,55 +150,6 @@ class GPSDClient {
       fix.status = status;
 
       gps_fix_pub.publish(fix);
-    }
-
-    void process_data_navsat(struct gps_data_t* p) {
-      NavSatFixPtr fix(new NavSatFix);
-
-      /* TODO: Support SBAS and other GBAS. */
-
-      if (use_gps_time)
-        fix->header.stamp = ros::Time(p->fix.time);
-      else
-        fix->header.stamp = ros::Time::now();
-
-      /* gpsmm pollutes the global namespace with STATUS_,
-       * so we need to use the ROS message's integer values
-       * for status.status
-       */
-      switch (p->status) {
-        case STATUS_NO_FIX:
-          fix->status.status = -1; // NavSatStatus::STATUS_NO_FIX;
-          break;
-        case STATUS_FIX:
-          fix->status.status = 0; // NavSatStatus::STATUS_FIX;
-          break;
-        case STATUS_DGPS_FIX:
-          fix->status.status = 2; // NavSatStatus::STATUS_GBAS_FIX;
-          break;
-      }
-
-      fix->status.service = NavSatStatus::SERVICE_GPS;
-
-      fix->latitude = p->fix.latitude;
-      fix->longitude = p->fix.longitude;
-      fix->altitude = p->fix.altitude;
-
-      /* gpsd reports status=OK even when there is no current fix,
-       * as long as there has been a fix previously. Throw out these
-       * fake results, which have NaN variance
-       */
-      if (isnan(p->fix.epx)) {
-        return;
-      }
-
-      fix->position_covariance[0] = p->fix.epx;
-      fix->position_covariance[4] = p->fix.epy;
-      fix->position_covariance[8] = p->fix.epv;
-
-      fix->position_covariance_type = NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
-
-      navsat_fix_pub.publish(fix);
     }
 };
 
